@@ -753,12 +753,72 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     return sampleLight.computeStateAt(DateTime.now()) == TrafficLightState.red;
   }
 
+  double _getDistanceToTrafficLight() {
+    if (currentLocation == null) return 0.0;
+    
+    return Geolocator.distanceBetween(
+      currentLocation!.latitude!,
+      currentLocation!.longitude!,
+      sampleLight.position.latitude,
+      sampleLight.position.longitude,
+    );
+  }
+
+  void _setTestDestination() {
+    setState(() {
+      destination = sampleLight.position;
+      _searchController.text = 'Traffic Light Test Location (Pakistan)';
+      _searchResults = [];
+    });
+    
+    _updateMarkers();
+    _getRoute();
+    _openNavigationPanel();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Destination set to traffic light location for testing'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF008080),
+      ),
+    );
+  }
+
+  // Test location counter for cycling through different positions
+  int _testLocationIndex = 0;
+  
   void _useMockLocation() {
-    // Use a location near the sample traffic light for testing
+    // Multiple test locations around the Pakistan traffic light for testing
+    final testLocations = [
+      {
+        'name': 'At Traffic Light',
+        'latitude': 31.520400, // Exactly at traffic light
+        'longitude': 74.358700,
+      },
+      {
+        'name': 'Near Traffic Light (10m)',
+        'latitude': 31.520450, // About 10 meters away
+        'longitude': 74.358750,
+      },
+      {
+        'name': 'Approaching Traffic Light (30m)',
+        'latitude': 31.520500, // About 30 meters away
+        'longitude': 74.358800,
+      },
+      {
+        'name': 'Far from Traffic Light (100m)',
+        'latitude': 31.520600, // About 100 meters away
+        'longitude': 74.358900,
+      },
+    ];
+
+    final selectedLocation = testLocations[_testLocationIndex % testLocations.length];
+    _testLocationIndex++;
+
     setState(() {
       currentLocation = loc.LocationData.fromMap({
-        'latitude': 42.3443, // Close to traffic light
-        'longitude': -83.1671,
+        'latitude': selectedLocation['latitude'] as double,
+        'longitude': selectedLocation['longitude'] as double,
         'accuracy': 5.0,
         'altitude': 0.0,
         'speed': 0.0,
@@ -767,10 +827,23 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         'time': DateTime.now().millisecondsSinceEpoch.toDouble(),
       });
     });
+    
     _updateMarkers();
     if (destination != null) {
       _getRoute();
     }
+    
+    // Show which test location was selected
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Test Location: ${selectedLocation['name']}'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF008080),
+      ),
+    );
+    
+    // Check traffic light proximity immediately after setting location
+    _checkTrafficLightProximity();
   }
 
   // -------------------
@@ -1268,6 +1341,67 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          
+          // Quick test destination button
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _setTestDestination,
+                  icon: const Icon(Icons.traffic),
+                  label: const Text('Set Traffic Light as Destination'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          // Traffic Light Debug Info
+          if (_isNearSampleLight()) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '🚦 Traffic Light Debug Info:',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Distance: ${_getDistanceToTrafficLight().toStringAsFixed(1)}m',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  Text(
+                    'Light State: ${sampleLight.computeStateAt(DateTime.now()).name.toUpperCase()}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  Text(
+                    'Seconds to Green: ${sampleLight.secondsUntilGreen(DateTime.now())}s',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  Text(
+                    'Stopped at Light: ${isStoppedAtLight ? "YES" : "NO"}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  Text(
+                    'Location: ${sampleLight.position.latitude.toStringAsFixed(6)}, ${sampleLight.position.longitude.toStringAsFixed(6)}',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
