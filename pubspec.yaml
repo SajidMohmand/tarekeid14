@@ -35,15 +35,26 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Google Maps and Location
   google_maps_flutter: ^2.13.1
   location: ^8.0.1
   http: ^1.5.0
-#  flutter_local_notifications: ^19.5.0
+  
+  # Notifications
   flutter_local_notifications: ^19.5.0
-
-  system_alert_window: ^2.0.7
+  
+  # Permissions and Overlays
   permission_handler: ^11.3.1
+  system_alert_window: ^2.0.7
+  
+  # Timezone for notifications
   timezone: ^0.10.1
+  
+  # Floating window/PiP mode
+  flutter_pip_mode: ^0.1.0
+  
+  # Additional utilities
+  geolocator: ^13.0.1
 
 
 dev_dependencies:
