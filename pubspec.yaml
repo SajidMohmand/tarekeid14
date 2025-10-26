@@ -45,6 +45,11 @@ dependencies:
   permission_handler: ^11.3.1
   timezone: ^0.10.1
 
+  geolocator: ^13.0.1
+#  flutter_pip_mode: ^0.1.0
+  android_pip: ^2.0.1
+
+
 
 dev_dependencies:
   flutter_test:
