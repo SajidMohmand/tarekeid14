@@ -1,36 +1,85 @@
+// lib/screens/animation_screen.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'home_screen.dart';
+import 'home_screen2.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 class AnimationScreen extends StatefulWidget {
   @override
   _AnimationScreenState createState() => _AnimationScreenState();
 }
+
 class _AnimationScreenState extends State<AnimationScreen> {
   late Timer _timer;
-  int _currentLight = 0; // 0 = red, 1 = yellow, 2 = green
+  int _currentLight = 0;
+
   @override
   void initState() {
     super.initState();
-// Timer to switch lights every 0.5 seconds
-    _timer = Timer.periodic(Duration(milliseconds: 500), (timer) {
-      setState(() {
-        _currentLight = (_currentLight + 1) % 3;
-      });
+
+    // Start traffic light animation
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      if (mounted) {
+        setState(() {
+          _currentLight = (_currentLight + 1) % 3;
+        });
+      }
     });
-// Navigate to HomeScreen after 3 seconds
-    Future.delayed(Duration(seconds: 3), () {
-      _timer.cancel();
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => HomeScreen()),
-      );
+
+    // Delay before navigation
+    Future.delayed(const Duration(seconds: 3), () {
+      _navigateNext();
     });
   }
+
+  /// Function to handle navigation safely after delay
+  Future<void> _navigateNext() async {
+    // Fetch user details
+    final details = await _getStoredDetails();
+
+    if (!mounted) return; // Ensure widget still exists
+
+    _timer.cancel(); // Stop the animation timer before navigating
+
+    // Use addPostFrameCallback to ensure navigation happens
+    // *after* the current frame, preventing animation freeze
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (details != null) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => HomeScreenTwo(
+              name: details['name']!,
+              vehicle: details['vehicle']!,
+            ),
+          ),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => HomeScreen()),
+        );
+      }
+    });
+  }
+
+  Future<Map<String, String>?> _getStoredDetails() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString('name');
+    final vehicle = prefs.getString('vehicle');
+    if (name != null && vehicle != null) {
+      return {'name': name, 'vehicle': vehicle};
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     _timer.cancel();
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -39,8 +88,8 @@ class _AnimationScreenState extends State<AnimationScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-// App title
-            Text(
+            // App title
+            const Text(
               "Mase",
               style: TextStyle(
                 color: Colors.white,
@@ -48,15 +97,15 @@ class _AnimationScreenState extends State<AnimationScreen> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            SizedBox(height: 50), // space between text and lights
-// Traffic lights
+            const SizedBox(height: 50),
+            // Traffic lights
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _buildLight(Colors.red, _currentLight == 0),
-                SizedBox(width: 20),
+                const SizedBox(width: 20),
                 _buildLight(Colors.yellow, _currentLight == 1),
-                SizedBox(width: 20),
+                const SizedBox(width: 20),
                 _buildLight(Colors.green, _currentLight == 2),
               ],
             ),
@@ -65,9 +114,10 @@ class _AnimationScreenState extends State<AnimationScreen> {
       ),
     );
   }
+
   Widget _buildLight(Color color, bool isOn) {
     return AnimatedOpacity(
-      duration: Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 300),
       opacity: isOn ? 1.0 : 0.3,
       child: Container(
         width: 30,

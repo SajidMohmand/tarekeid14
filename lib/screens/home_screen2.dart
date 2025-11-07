@@ -1,4 +1,3 @@
-// lib/screens/home_screen2.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show cos, sqrt, asin, max, min;
@@ -12,8 +11,6 @@ import 'package:permission_handler/permission_handler.dart' as perm;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:geolocator/geolocator.dart';
-
-
 
 class HomeScreenTwo extends StatefulWidget {
   final String name;
@@ -32,57 +29,237 @@ enum TrafficLightState { red, yellow, green }
 
 class TrafficLight {
   final LatLng position;
-  TrafficLightState state;
-  // durations in seconds
-  int redDuration;
-  int yellowDuration;
-  int greenDuration;
-  DateTime? cycleStart; // time when cycle started (for scheduling)
+  static DateTime? sharedCycleStart;
 
   TrafficLight({
     required this.position,
-    this.state = TrafficLightState.red,
-    this.redDuration = 10,
-    this.yellowDuration = 3,
-    this.greenDuration = 8,
   });
 
-  // total cycle length
-  int get totalSeconds => redDuration + yellowDuration + greenDuration;
-
-  // given a DateTime now, compute how many seconds until it becomes green
-  int secondsUntilGreen(DateTime now) {
-    if (cycleStart == null) {
-      // assume started now with current state as red
-      return redDuration;
+  // Updated timing: Horizontal (Warren Ave): Green 60s, Yellow 3s, Red 30s, All-Red 2s
+  // Vertical (Miller Rd): Red 60s, Green 30s, Yellow 3s, All-Red 2s
+  // Total cycle: 95 seconds
+  static TrafficLightState computeStateAt(DateTime now, bool isHorizontal) {
+    if (sharedCycleStart == null) {
+      sharedCycleStart = DateTime.now();
     }
-    final elapsed = now.difference(cycleStart!).inSeconds % totalSeconds;
-    // cycle order: red -> yellow -> green
-    if (elapsed < redDuration) {
-      // still in red
-      return redDuration - elapsed;
-    } else if (elapsed < redDuration + yellowDuration) {
-      // in yellow, next green after yellow part
-      return redDuration + yellowDuration - elapsed;
+    final elapsed = now.difference(sharedCycleStart!).inSeconds % 95;
+
+    if (isHorizontal) {
+      // Horizontal (Warren Ave)
+      if (elapsed < 60) return TrafficLightState.green;  // 0-59: Green
+      if (elapsed < 63) return TrafficLightState.yellow; // 60-62: Yellow
+      return TrafficLightState.red;                      // 63-94: Red (includes 2s all-red)
     } else {
-      // currently green, returns 0
-      return 0;
+      // Vertical (Miller Rd)
+      if (elapsed < 65) return TrafficLightState.red;    // 0-64: Red (includes 2s all-red at end of horizontal)
+      if (elapsed < 95) return TrafficLightState.green;  // 65-94: Green
+      return TrafficLightState.red;                      // Should not reach here
     }
   }
 
-  TrafficLightState computeStateAt(DateTime now) {
-    if (cycleStart == null) {
-      return state;
+  static int secondsUntilGreen(DateTime now, bool isHorizontal) {
+    if (sharedCycleStart == null) {
+      sharedCycleStart = DateTime.now();
     }
-    final elapsed = now.difference(cycleStart!).inSeconds % totalSeconds;
-    if (elapsed < redDuration) return TrafficLightState.red;
-    if (elapsed < redDuration + yellowDuration) return TrafficLightState.yellow;
-    return TrafficLightState.green;
+    final elapsed = now.difference(sharedCycleStart!).inSeconds % 95;
+
+    if (isHorizontal) {
+      if (elapsed < 63) return 0; // Already green or yellow
+      return 95 - elapsed; // Time until next green
+    } else {
+      if (elapsed < 65) return 65 - elapsed; // Wait for green
+      if (elapsed < 95) return 0; // Already green
+      return 65; // Next cycle
+    }
+  }
+}
+
+class TrafficLightAnimationScreen extends StatefulWidget {
+  final bool isHorizontal;
+  final LatLng lightPosition;
+
+  const TrafficLightAnimationScreen({
+    Key? key,
+    required this.isHorizontal,
+    required this.lightPosition,
+  }) : super(key: key);
+
+  @override
+  _TrafficLightAnimationScreenState createState() => _TrafficLightAnimationScreenState();
+}
+
+class _TrafficLightAnimationScreenState extends State<TrafficLightAnimationScreen> {
+  late Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      setState(() {});
+
+      // Auto-close when light turns green
+      final now = DateTime.now();
+      final state = TrafficLight.computeStateAt(now, widget.isHorizontal);
+      if (state == TrafficLightState.green) {
+        Future.delayed(Duration(milliseconds: 500), () {
+          if (mounted) Navigator.pop(context);
+        });
+      }
+    });
   }
 
-  // advance simulated state by updating cycleStart so that computeStateAt(now) changes over time
-  void startCycleNow() {
-    cycleStart = DateTime.now();
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  Widget _buildLight(Color color, bool isOn) {
+    return AnimatedContainer(
+      duration: Duration(milliseconds: 300),
+      width: 80,
+      height: 80,
+      decoration: BoxDecoration(
+        color: isOn ? color : color.withOpacity(0.3),
+        shape: BoxShape.circle,
+        boxShadow: isOn ? [
+          BoxShadow(
+            color: color.withOpacity(0.6),
+            blurRadius: 20,
+            spreadRadius: 5,
+          )
+        ] : [],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final state = TrafficLight.computeStateAt(now, widget.isHorizontal);
+    final seconds = TrafficLight.secondsUntilGreen(now, widget.isHorizontal);
+
+    String direction = widget.isHorizontal ? "Warren Ave (Horizontal)" : "Miller Rd (Vertical)";
+
+    return Scaffold(
+      backgroundColor: Colors.black87,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Close button
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                icon: Icon(Icons.close, color: Colors.white, size: 32),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      "Traffic Light",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      direction,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 18,
+                      ),
+                    ),
+                    SizedBox(height: 50),
+
+                    // Traffic Light Display
+                    Container(
+                      padding: EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[900],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildLight(Colors.red, state == TrafficLightState.red),
+                          SizedBox(height: 15),
+                          _buildLight(Colors.yellow, state == TrafficLightState.yellow),
+                          SizedBox(height: 15),
+                          _buildLight(Colors.green, state == TrafficLightState.green),
+                        ],
+                      ),
+                    ),
+
+                    SizedBox(height: 40),
+
+                    // Status Display
+                    if (state == TrafficLightState.red) ...[
+                      Text(
+                        'RED LIGHT',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        '$seconds seconds until GREEN',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                        ),
+                      ),
+                    ] else if (state == TrafficLightState.yellow) ...[
+                      Text(
+                        'YELLOW LIGHT',
+                        style: TextStyle(
+                          color: Colors.yellow,
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'Prepare to stop',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                        ),
+                      ),
+                    ] else ...[
+                      Text(
+                        'GREEN LIGHT',
+                        style: TextStyle(
+                          color: Colors.green,
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'You can go!',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -94,6 +271,11 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   StreamSubscription<loc.LocationData>? locationSubscription;
   List<TrafficLight> trafficLights = [];
   int? candidateLightIndex;
+  bool? candidateIsHorizontal;
+
+  // Track which lights user has already triggered
+  Set<int> triggeredLights = {};
+
   // Destination and Route
   LatLng? destination;
   final Set<Polyline> polylines = {};
@@ -112,18 +294,15 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   List<Map<String, dynamic>> _searchResults = [];
   bool isSearching = false;
 
-  // Google API key - IMPORTANT: Replace with your own key and keep it secure
+  // Google API key
   final String apiKey = 'AIzaSyCmBKt7V3H3xSjfko7Zso7dTI2SOoisQP8';
-
-  // Traffic light simulation - sample intersection coordinate provided
-  // Coordinates: 42°20'39.3"N 83°10'01.4"W -> 42.34425, -83.167056
-  // late TrafficLight sampleLight;
 
   // Navigation Controls
   bool navigationActive = false;
-  bool isStoppedAtLight = false; // simulate whether user is currently stopped
-  Timer? _trafficTimer; // updates UI for traffic light animation
-  Timer? _navigationTimer; // updates navigation progress
+  bool isStoppedAtLight = false;
+  bool isShowingAnimation = false;
+  Timer? _trafficTimer;
+  Timer? _navigationTimer;
 
   // Notifications
   FlutterLocalNotificationsPlugin? _localNotifications;
@@ -131,28 +310,14 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   // Floating window state
   bool isInPipMode = false;
 
+  // Turn-by-turn
+  List<Map<String, dynamic>> routeSteps = [];
+  int currentStepIndex = -1;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
-    // // Initialize sample traffic light at provided coordinates
-    // sampleLight = TrafficLight(
-    //   position: const LatLng(42.34425, -83.167056),
-    //   state: TrafficLightState.red,
-    //   redDuration: 12,
-    //   yellowDuration: 3,
-    //   greenDuration: 10,
-    // );
-
-    // sampleLight = TrafficLight(
-    //   position: const LatLng(31.520400, 74.358700),
-    //   state: TrafficLightState.red,
-    //   redDuration: 12,
-    //   yellowDuration: 3,
-    //   greenDuration: 10,
-    // );
-    // sampleLight.startCycleNow();
 
     _initNotifications();
     _initLocation();
@@ -174,7 +339,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   // Notifications setup
   // -------------------
   Future<void> _initNotifications() async {
-    // Initialize timezone data
     try {
       tzdata.initializeTimeZones();
     } catch (e) {
@@ -183,11 +347,9 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
 
     _localNotifications = FlutterLocalNotificationsPlugin();
 
-    // Android settings
     const AndroidInitializationSettings androidSettings =
     AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // iOS settings
     const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
       requestSoundPermission: true,
       requestBadgePermission: true,
@@ -202,12 +364,10 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     await _localNotifications!.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // Handle notification tap if needed
         print('Notification tapped: ${response.payload}');
       },
     );
 
-    // Request notification permissions
     await _requestNotificationPermissions();
   }
 
@@ -218,7 +378,7 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     }
   }
 
-  Future<void> _showGreenNotification(String title, String body, DateTime? atTime,int lightIndex) async {
+  Future<void> _showGreenNotification(String title, String body, DateTime? atTime, int lightIndex) async {
     const androidDetails = AndroidNotificationDetails(
       'traffic_channel',
       'Traffic Lights',
@@ -243,17 +403,18 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     if (atTime != null && atTime.isAfter(DateTime.now())) {
       final tzDate = tz.TZDateTime.from(atTime, tz.local);
       await _localNotifications!.zonedSchedule(
-        lightIndex, // Use lightIndex as unique ID
+        lightIndex,
         title,
         body,
         tzDate,
         details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
+
+
     } else {
       await _localNotifications!.show(lightIndex, title, body, details);
     }
-
   }
 
   // -------------------
@@ -263,9 +424,11 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     _trafficTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() {
-        // Update UI for traffic light state changes
         _updateMarkers();
       });
+
+      // Check for traffic light proximity every second
+      _checkTrafficLightProximity();
     });
   }
 
@@ -274,7 +437,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   // -------------------
   Future<void> _initLocation() async {
     try {
-      // Request location permissions
       final permissionStatus = await perm.Permission.location.request();
       if (!permissionStatus.isGranted) {
         setState(() {
@@ -284,7 +446,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         return;
       }
 
-      // Check if location service is enabled
       bool serviceEnabled = await location.serviceEnabled();
       if (!serviceEnabled) {
         serviceEnabled = await location.requestService();
@@ -297,14 +458,12 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         }
       }
 
-      // Configure location settings for high accuracy
       await location.changeSettings(
         accuracy: loc.LocationAccuracy.high,
         interval: 1000,
         distanceFilter: 5,
       );
 
-      // Get current location
       currentLocation = await location.getLocation();
       _updateMarkers();
       _startLocationUpdates();
@@ -327,8 +486,8 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         currentLocation = locData;
       });
       _updateMarkers();
+      _updateCurrentStep();
 
-      // Update route if navigation is active
       if (navigationActive && destination != null) {
         _updateNavigationProgress();
       }
@@ -339,7 +498,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     if (currentLocation == null) return;
     markers.clear();
 
-    // Current location marker (blue dot)
     markers.add(Marker(
       markerId: const MarkerId('current_location'),
       position: LatLng(currentLocation!.latitude!, currentLocation!.longitude!),
@@ -347,7 +505,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
     ));
 
-    // Destination marker
     if (destination != null) {
       markers.add(Marker(
         markerId: const MarkerId('destination'),
@@ -357,17 +514,17 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       ));
     }
 
-    // Traffic lights markers
     final now = DateTime.now();
     for (int i = 0; i < trafficLights.length; i++) {
       final light = trafficLights[i];
-      final lightStateNow = light.computeStateAt(now);
+      // For marker color, assume horizontal direction
+      final lightStateNow = TrafficLight.computeStateAt(now, true);
       markers.add(Marker(
         markerId: MarkerId('traffic_light_$i'),
         position: light.position,
         infoWindow: InfoWindow(
-          title: 'Traffic Light',
-          snippet: 'State: ${lightStateNow.name.toUpperCase()}',
+          title: 'Traffic Light ${i + 1}',
+          snippet: 'Tap to view details',
         ),
         icon: BitmapDescriptor.defaultMarkerWithHue(
           lightStateNow == TrafficLightState.red
@@ -383,7 +540,7 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   }
 
   // -------------------
-  // Search functionality using Google Places/Geocoding API
+  // Search functionality
   // -------------------
   Future<void> _performSearch(String query) async {
     if (query.trim().isEmpty) return;
@@ -393,7 +550,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     });
 
     try {
-      // Use Google Geocoding API for address search
       final url = Uri.parse(
           'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(query)}&key=$apiKey'
       );
@@ -433,7 +589,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     }
   }
 
-  // Set destination from search result
   Future<void> _setDestinationFromSearch(Map<String, dynamic> item) async {
     final lat = (item['lat'] as num).toDouble();
     final lng = (item['lng'] as num).toDouble();
@@ -451,13 +606,13 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   }
 
   // -------------------
-  // Directions & Route using Google Directions API
+  // Directions & Route
   // -------------------
   Future<void> _getRoute() async {
     if (currentLocation == null || destination == null) return;
 
     setState(() {
-      errorMessage = null; // Clear previous errors
+      errorMessage = null;
     });
 
     try {
@@ -477,13 +632,14 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
           final route = data['routes'][0];
           final leg = route['legs'][0];
 
-          // Extract route information
           final polylinePoints = route['overview_polyline']['points'];
           final coordinates = _decodePolyline(polylinePoints);
 
-          // Get distance and duration
-          routeDistance = leg['distance']['value'] / 1609.34; // Convert meters to miles
+          routeDistance = leg['distance']['value'] / 1609.34;
           estimatedTime = leg['duration']['text'];
+
+          routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
+          currentStepIndex = 0;
 
           setState(() {
             polylines.clear();
@@ -493,12 +649,11 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
               color: const Color(0xFF4285F4),
               width: 5,
               geodesic: true,
-              patterns: [], // Solid line
+              patterns: [],
             ));
             hasRoute = true;
           });
 
-          // Auto-fit map to show route
           Future.delayed(const Duration(milliseconds: 800), () {
             if (mounted) _fitMapToRoute();
           });
@@ -532,7 +687,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     }
   }
 
-  // Decode Google polyline algorithm
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> points = [];
     int index = 0, len = encoded.length;
@@ -576,7 +730,7 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       currentLocation!.longitude!,
       destination!.latitude,
       destination!.longitude,
-    ) / 1609.34; // Convert meters to miles
+    ) / 1609.34;
   }
 
   void _fitMapToRoute() {
@@ -631,6 +785,9 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       estimatedTime = '';
       routeDistance = 0.0;
       _searchController.clear();
+      routeSteps = [];
+      currentStepIndex = -1;
+      triggeredLights.clear();
     });
     _stopNavigation();
   }
@@ -640,14 +797,13 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
 
     setState(() {
       navigationActive = true;
+      triggeredLights.clear();
     });
 
-    // Start navigation timer for updates
     _navigationTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _updateNavigationProgress();
     });
 
-    // Check if near traffic light and schedule notification if needed
     _checkTrafficLightProximity();
   }
 
@@ -655,83 +811,145 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     _navigationTimer?.cancel();
     setState(() {
       navigationActive = false;
-      _candidateGreenTime = null;
-      _candidateGreenLight = null;
+      triggeredLights.clear();
     });
   }
 
   void _updateNavigationProgress() {
     if (currentLocation != null && destination != null) {
-      // Recalculate route with current position
       _getRoute();
-
-      // Check traffic light proximity
       _checkTrafficLightProximity();
     }
   }
 
+  void _updateCurrentStep() {
+    if (routeSteps.isEmpty || currentStepIndex >= routeSteps.length || currentLocation == null) return;
+
+    final currentStep = routeSteps[currentStepIndex];
+    final endLat = currentStep['end_location']['lat'] as double;
+    final endLng = currentStep['end_location']['lng'] as double;
+
+    final distance = Geolocator.distanceBetween(
+      currentLocation!.latitude!,
+      currentLocation!.longitude!,
+      endLat,
+      endLng,
+    );
+
+    if (distance < 50) {
+      currentStepIndex++;
+      if (currentStepIndex >= routeSteps.length) {
+        _stopNavigation();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('You have arrived!')));
+      }
+    }
+  }
+
+  String _stripHtml(String html) {
+    return html.replaceAll(RegExp(r'<[^>]*>', multiLine: true), '');
+  }
+
   // -------------------
-  // Traffic Light Logic
+  // Traffic Light Logic - ENHANCED
   // -------------------
   DateTime? _candidateGreenTime;
   TrafficLight? _candidateGreenLight;
 
+  bool _determineDirection(double heading) {
+    // Normalize heading to 0-360
+    double normalizedHeading = heading % 360;
+    if (normalizedHeading < 0) normalizedHeading += 360;
+
+    // Horizontal: East (45-135°) or West (225-315°)
+    // Vertical: North (315-45°) or South (135-225°)
+    return (normalizedHeading >= 45 && normalizedHeading < 135) ||
+        (normalizedHeading >= 225 && normalizedHeading < 315);
+  }
+
   void _checkTrafficLightProximity() {
     if (currentLocation == null) return;
-    if (trafficLights.isEmpty && isStoppedAtLight) {
-      setState(() {
-        isStoppedAtLight = false;
-        candidateLightIndex = null;
-      });
-      return;
-    }
+
     final now = DateTime.now();
-    _candidateGreenTime = null;
-    _candidateGreenLight = null;
-    candidateLightIndex = null;
+    const detectionRadius = 50.0; // meters
 
     for (int i = 0; i < trafficLights.length; i++) {
+      // Skip if already triggered this light
+      if (triggeredLights.contains(i)) continue;
+
       final light = trafficLights[i];
-      final lightState = light.computeStateAt(now);
       final distanceToLight = Geolocator.distanceBetween(
         currentLocation!.latitude!,
         currentLocation!.longitude!,
         light.position.latitude,
         light.position.longitude,
-      ); // meters
+      );
 
-      const stopThresholdMeters = 50.0; // Within 50m considered "at light"
+      // Check if user is within detection radius
+      if (distanceToLight <= detectionRadius) {
+        // Determine direction based on heading
+        double heading = currentLocation?.heading ?? 0.0;
+        bool isHorizontal = _determineDirection(heading);
 
-      if (distanceToLight <= stopThresholdMeters && lightState == TrafficLightState.red) {
-        // User is near red light - prepare notification
-        final secondsUntilGreen = light.secondsUntilGreen(now);
-        final greenAt = now.add(Duration(seconds: secondsUntilGreen));
+        final lightState = TrafficLight.computeStateAt(now, isHorizontal);
 
-        _candidateGreenTime = greenAt;
-        _candidateGreenLight = light;
-        candidateLightIndex = i;
-        // _showGreenNotification(
-        //   'Traffic Light Alert 🚦',
-        //   'The light has turned green! You can continue driving.',
-        //   greenAt,
-        //   trafficLights.indexOf(light), // Pass index
-        // );
-        // Auto-mark as stopped if very close
-        if (distanceToLight <= 20.0 && !isStoppedAtLight) {
-          setState(() {
-            isStoppedAtLight = true;
-          });
+        setState(() {
+          candidateLightIndex = i;
+          candidateIsHorizontal = isHorizontal;
+          _candidateGreenLight = light;
+        });
+
+        // If light is red, show animation and mark as triggered
+        if (lightState == TrafficLightState.red && !isShowingAnimation) {
+          triggeredLights.add(i); // Mark this light as triggered
+
+          final secondsUntilGreen = TrafficLight.secondsUntilGreen(now, isHorizontal);
+          final greenAt = now.add(Duration(seconds: secondsUntilGreen));
+          _candidateGreenTime = greenAt;
+
+          // Show animation overlay
+          _showTrafficLightAnimation(light.position, isHorizontal);
+
+          // Schedule notification for when light turns green
+          _showGreenNotification(
+            'Traffic Light Alert 🚦',
+            'The light will turn green in $secondsUntilGreen seconds!',
+            greenAt,
+            i,
+          );
         }
-        break; // Handle only the closest light for simplicity
+
+        break; // Handle only the closest light
+      } else {
+        // User moved away from this light, allow re-trigger
+        if (distanceToLight > detectionRadius * 2) {
+          triggeredLights.remove(i);
+        }
       }
     }
+  }
 
-    if (_candidateGreenLight == null && isStoppedAtLight) {
+  void _showTrafficLightAnimation(LatLng lightPosition, bool isHorizontal) {
+    if (isShowingAnimation) return;
+
+    setState(() {
+      isShowingAnimation = true;
+      isStoppedAtLight = true;
+    });
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TrafficLightAnimationScreen(
+          isHorizontal: isHorizontal,
+          lightPosition: lightPosition,
+        ),
+      ),
+    ).then((_) {
       setState(() {
+        isShowingAnimation = false;
         isStoppedAtLight = false;
-        candidateLightIndex = null;
       });
-    }
+    });
   }
 
   void _userStoppedAtLight(bool stopped) {
@@ -747,14 +965,13 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   }
 
   // -------------------
-  // App Lifecycle Management for Notifications
+  // App Lifecycle Management
   // -------------------
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
     if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      // App moved to background
       if (navigationActive && isStoppedAtLight && _candidateGreenTime != null) {
         _showGreenNotification(
           'Traffic Light Alert 🚦',
@@ -765,16 +982,14 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         print('Green light notification scheduled for ${_candidateGreenTime!}');
       }
 
-      // Simulate floating window mode
       _enterFloatingMode();
     } else if (state == AppLifecycleState.resumed) {
-      // App returned to foreground
       _exitFloatingMode();
     }
   }
 
   // -------------------
-  // Floating Window/PiP Mode Simulation
+  // Floating Window/PiP Mode
   // -------------------
   void _enterFloatingMode() {
     if (navigationActive) {
@@ -782,7 +997,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         isInPipMode = true;
       });
       print('Entered floating window mode (simulated)');
-      // In a real app, you would use flutter_pip_mode or system_alert_window here
     }
   }
 
@@ -796,41 +1010,16 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   // -------------------
   // Helper Methods
   // -------------------
-  bool _isNearSampleLight() {
-    if (currentLocation == null) return false;
-
-    for (var light in trafficLights) {
-      final distanceMeters = Geolocator.distanceBetween(
-        currentLocation!.latitude!,
-        currentLocation!.longitude!,
-        light.position.latitude,
-        light.position.longitude,
-      );
-      if (distanceMeters <= 200) return true;
-    }
-    return false;
-  }
-
-  bool _isLightRedNow() {
-    final now = DateTime.now();
-    for (var light in trafficLights) {
-      if (light.computeStateAt(now) == TrafficLightState.red) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   void _useMockLocation() {
     setState(() {
       currentLocation = loc.LocationData.fromMap({
-        'latitude': 31.5205, // Near Lahore coordinates
+        'latitude': 31.5205,
         'longitude': 74.3588,
         'accuracy': 5.0,
         'altitude': 0.0,
         'speed': 0.0,
         'speedAccuracy': 0.0,
-        'heading': 0.0,
+        'heading': 90.0, // East heading (horizontal)
         'time': DateTime.now().millisecondsSinceEpoch.toDouble(),
       });
     });
@@ -845,7 +1034,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
   // -------------------
   @override
   Widget build(BuildContext context) {
-    // Error state
     if (errorMessage != null) {
       return Scaffold(
         appBar: AppBar(
@@ -890,7 +1078,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       );
     }
 
-    // Loading state
     if (isLoading || currentLocation == null) {
       return Scaffold(
         appBar: AppBar(
@@ -911,7 +1098,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       );
     }
 
-    // Main map interface
     return Scaffold(
       appBar: AppBar(
         title: Text("${widget.name}'s Navigation"),
@@ -928,11 +1114,9 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       ),
       body: Stack(
         children: [
-          // Google Map
           GoogleMap(
             onMapCreated: (GoogleMapController controller) {
               mapController = controller;
-              // Auto-fit route after map is ready
               Future.delayed(const Duration(milliseconds: 1500), () {
                 if (mounted && hasRoute) _fitMapToRoute();
               });
@@ -957,16 +1141,17 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                         setState(() {
                           final newLight = TrafficLight(
                             position: position,
-                            state: TrafficLightState.red,
-                            redDuration: 12,
-                            yellowDuration: 3,
-                            greenDuration: 10,
                           );
-                          newLight.startCycleNow();
                           trafficLights.add(newLight);
                         });
                         _updateMarkers();
                         Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Traffic light added! Drive near it to see the animation.'),
+                            duration: Duration(seconds: 3),
+                          ),
+                        );
                       },
                       child: const Text('Add Traffic Light'),
                     ),
@@ -992,7 +1177,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
               target: LatLng(currentLocation!.latitude!, currentLocation!.longitude!),
               zoom: 17.5,
             ),
-
             markers: markers,
             polylines: polylines,
             myLocationEnabled: true,
@@ -1021,7 +1205,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
-                    // Vehicle info row
                     Row(
                       children: [
                         Container(
@@ -1042,56 +1225,54 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Icon(Icons.navigation, size: 14, color: Colors.grey[600]),
-                              const SizedBox(width: 6),
-                              Expanded( // 👈 this line prevents overflow
-                                child: Row(
-                                  children: [
-                                    Text(
-                                      '${_calculateDistance().toStringAsFixed(1)} miles',
-                                      style: const TextStyle(fontSize: 13),
-                                      overflow: TextOverflow.ellipsis, // 👈 truncates long text
-                                    ),
-                                    if (hasRoute) ...[
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green[100],
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: const Text(
-                                          'Route active',
-                                          style: TextStyle(fontSize: 11),
-                                        ),
-                                      ),
-                                    ],
-                                    if (estimatedTime.isNotEmpty) ...[
-                                      const SizedBox(width: 8),
-                                      Flexible( // 👈 makes this text shrink if needed
-                                        child: Text(
-                                          'ETA: $estimatedTime',
-                                          style: const TextStyle(fontSize: 11, color: Colors.blue),
+                              Row(
+                                children: [
+                                  Icon(Icons.navigation, size: 14, color: Colors.grey[600]),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Text(
+                                          '${_calculateDistance().toStringAsFixed(1)} miles',
+                                          style: const TextStyle(fontSize: 13),
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
+                                        if (hasRoute) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.green[100],
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: const Text(
+                                              'Route active',
+                                              style: TextStyle(fontSize: 11),
+                                            ),
+                                          ),
+                                        ],
+                                        if (estimatedTime.isNotEmpty) ...[
+                                          const SizedBox(width: 8),
+                                          Flexible(
+                                            child: Text(
+                                              'ETA: $estimatedTime',
+                                              style: const TextStyle(fontSize: 11, color: Colors.blue),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              )
                             ],
-                          )
-
-                          ],
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
 
-                    // Search bar
                     Row(
                       children: [
                         Expanded(
@@ -1119,7 +1300,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                             onSubmitted: (value) => _performSearch(value),
                             onChanged: (value) {
                               if (value.length > 2) {
-                                // Auto-search as user types
                                 Future.delayed(const Duration(milliseconds: 500), () {
                                   if (_searchController.text == value) {
                                     _performSearch(value);
@@ -1139,7 +1319,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                       ],
                     ),
 
-                    // Search results dropdown
                     if (_searchResults.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Container(
@@ -1172,28 +1351,25 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
             ),
           ),
 
-          // Traffic light countdown overlay
-          if (navigationActive && _candidateGreenLight != null && isStoppedAtLight)
+          // Turn-by-turn instruction
+          if (navigationActive && currentStepIndex >= 0 && currentStepIndex < routeSteps.length)
             Positioned(
-              bottom: navigationActive ? 280 : 120,
+              top: 200,
               left: 20,
               right: 20,
               child: Card(
-                color: Colors.black.withOpacity(0.8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                color: Colors.blue[50],
+                elevation: 4,
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(12.0),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.traffic, color: Colors.red, size: 24),
+                      Icon(Icons.turn_right, color: Colors.blue[700]),
                       const SizedBox(width: 8),
-                      Text(
-                        'RED LIGHT - ${_candidateGreenLight!.secondsUntilGreen(DateTime.now())}s until GREEN',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                      Expanded(
+                        child: Text(
+                          _stripHtml(routeSteps[currentStepIndex]['html_instructions'] ?? ''),
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                         ),
                       ),
                     ],
@@ -1201,6 +1377,34 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
                 ),
               ),
             ),
+
+          // Traffic light status indicator
+          if (isStoppedAtLight && candidateLightIndex != null)
+            Positioned(
+              top: 260,
+              left: 20,
+              right: 20,
+              child: Card(
+                color: Colors.red[50],
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Row(
+                    children: [
+                      Icon(Icons.traffic, color: Colors.red[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Stopped at traffic light - ${candidateIsHorizontal! ? "Warren Ave" : "Miller Rd"}',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
           // Navigation panel
           if (navigationActive)
             Positioned(
@@ -1212,11 +1416,9 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
         ],
       ),
 
-      // Floating action buttons
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          // Map type toggle
           FloatingActionButton.small(
             heroTag: 'map_type',
             onPressed: () {
@@ -1248,7 +1450,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
           ),
           const SizedBox(height: 8),
 
-          // Fit route to screen
           if (hasRoute)
             FloatingActionButton.small(
               heroTag: 'fit_route',
@@ -1258,7 +1459,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
             ),
           if (hasRoute) const SizedBox(height: 8),
 
-          // Center on current location
           FloatingActionButton(
             heroTag: 'center_main',
             onPressed: _centerOnCurrentLocation,
@@ -1270,7 +1470,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
     );
   }
 
-  // Navigation panel widget
   Widget _buildNavigationPanel() {
     final distance = _calculateDistance();
 
@@ -1290,7 +1489,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header row
           Row(
             children: [
               Expanded(
@@ -1307,7 +1505,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
           ),
           const SizedBox(height: 8),
 
-          // Destination info
           if (destination != null) ...[
             Row(
               children: [
@@ -1325,7 +1522,6 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
             ),
             const SizedBox(height: 12),
 
-            // Distance and time info
             Row(
               children: [
                 const Icon(Icons.straighten, size: 16),
@@ -1342,10 +1538,8 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
             const SizedBox(height: 16),
           ],
 
-          // Control buttons
           Row(
             children: [
-              // Start/Stop Navigation
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: hasRoute
@@ -1369,26 +1563,11 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
           ),
           const SizedBox(height: 8),
 
-          // Debug controls (for testing)
           Row(
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () => _userStoppedAtLight(!isStoppedAtLight),
-                  icon: Icon(isStoppedAtLight ? Icons.play_arrow : Icons.pause),
-                  label: Text(isStoppedAtLight ? 'Mark Moving' : 'Mark Stopped'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: (){
-                    _useMockLocation();
-                  },
+                  onPressed: _useMockLocation,
                   icon: const Icon(Icons.location_searching),
                   label: const Text('Test Location'),
                   style: ElevatedButton.styleFrom(
@@ -1399,34 +1578,49 @@ class _HomeScreenTwoState extends State<HomeScreenTwo> with WidgetsBindingObserv
               ),
             ],
           ),
+
+          if (trafficLights.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${trafficLights.length} traffic light(s) on map',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  // Map info dialog
   void _showMapInfo(BuildContext context) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Navigation Info'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('✅ Live Location Tracking'),
-            const Text('✅ Google Maps Integration'),
-            const Text('✅ Address Search'),
-            const Text('✅ Turn-by-turn Directions'),
-            const Text('✅ Traffic Light Simulation'),
-            const Text('✅ Background Notifications'),
-            Text('Map Type: ${currentMapType.name}'),
-            const SizedBox(height: 10),
-            const Text(
-              'Note: For full background notifications and floating window features, test on a real device.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('✅ Live Location Tracking'),
+              const Text('✅ Google Maps Integration'),
+              const Text('✅ Address Search'),
+              const Text('✅ Turn-by-turn Directions'),
+              const Text('✅ Auto Traffic Light Detection'),
+              const Text('✅ Background Notifications'),
+              const SizedBox(height: 10),
+              const Text('Traffic Light Timing:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('• Warren Ave (Horizontal): 60s Green, 3s Yellow, 30s Red'),
+              const Text('• Miller Rd (Vertical): 30s Green, 3s Yellow, 60s Red'),
+              const Text('• 2s All-Red transition'),
+              const SizedBox(height: 10),
+              const Text('How to use:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('1. Tap map to add traffic lights'),
+              const Text('2. Drive within 50m to trigger animation'),
+              const Text('3. Direction detected automatically'),
+              const SizedBox(height: 10),
+              Text('Map Type: ${currentMapType.name}'),
+            ],
+          ),
         ),
         actions: [
           TextButton(

@@ -49,6 +49,8 @@ dependencies:
 #  flutter_pip_mode: ^0.1.0
   android_pip: ^2.0.1
 
+  shared_preferences: ^2.5.3
+
 
 
 dev_dependencies:

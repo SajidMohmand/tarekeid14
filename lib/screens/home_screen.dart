@@ -1,23 +1,31 @@
+// lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
 import 'home_screen2.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
+
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _vehicleController = TextEditingController();
+
   @override
   void dispose() {
     _nameController.dispose();
     _vehicleController.dispose();
     super.dispose();
   }
-  void _continue() {
+
+  void _continue() async {
     String name = _nameController.text.trim();
     String vehicle = _vehicleController.text.trim();
     if (name.isNotEmpty && vehicle.isNotEmpty) {
+      await _storeDetails(name, vehicle);
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -36,6 +44,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
+
+  Future<void> _storeDetails(String name, String vehicle) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('name', name);
+    await prefs.setString('vehicle', vehicle);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
